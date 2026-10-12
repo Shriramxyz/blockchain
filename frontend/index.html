@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CertChain – Certificate Verification</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+<style>
+:root{--bg:#f6f7fb;--card:#fff;--text:#1b1f2a;--muted:#667085;--line:#e4e7ec;--accent:#4f46e5;--ok:#067647;--okbg:#ecfdf3;--bad:#b42318;--badbg:#fef3f2;--warn:#b54708;--warnbg:#fffaeb}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1117;--card:#181b24;--text:#e8eaf0;--muted:#98a2b3;--line:#2a2f3c;--accent:#818cf8;--ok:#6ce9a6;--okbg:#0b2a1c;--bad:#fda29b;--badbg:#2e1411;--warn:#fec84b;--warnbg:#2b1f08}}
+*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text)}
+.wrap{max-width:760px;margin:0 auto;padding:20px 16px 60px}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+h1{font-size:22px;margin:0}h1 span{color:var(--accent)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:14px}
+.tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+.tabs button{background:var(--card);border:1px solid var(--line);color:var(--text);padding:8px 14px;border-radius:8px;cursor:pointer;font:inherit}
+.tabs button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
+input[type=text],input{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit}
+.drop{border:2px dashed var(--line);border-radius:10px;padding:22px;text-align:center;color:var(--muted);cursor:pointer}
+.drop.over{border-color:var(--accent)}
+button.primary{background:var(--accent);color:#fff;border:0;padding:10px 18px;border-radius:8px;cursor:pointer;font:inherit;margin-top:14px}
+button.primary:disabled{opacity:.5;cursor:not-allowed}
+button.ghost{background:none;border:1px solid var(--line);color:var(--text);padding:7px 12px;border-radius:8px;cursor:pointer;font:inherit}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;word-break:break-all}
+.muted{color:var(--muted);font-size:13px}
+.res{border-radius:10px;padding:14px;margin-top:14px}
+.res.ok{background:var(--okbg);color:var(--ok)}.res.bad{background:var(--badbg);color:var(--bad)}.res.warn{background:var(--warnbg);color:var(--warn)}
+.res h3{margin:0 0 8px;font-size:17px}
+.kv{display:grid;grid-template-columns:110px 1fr;gap:4px 10px;color:var(--text);font-size:14px}.kv b{color:var(--muted);font-weight:500}
+.hidden{display:none}.row{display:flex;gap:8px}.row>*{flex:1}
+details summary{cursor:pointer;color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Cert<span>Chain</span></h1>
+  <div><span id="acct" class="muted">Not connected</span> <button class="ghost" id="connectBtn">Connect wallet</button></div>
+</header>
+
+<details class="card" id="cfg">
+  <summary>Network settings</summary>
+  <label>Registry contract address</label><input id="addr" placeholder="0x…">
+  <label>Read-only RPC URL (used when no wallet is connected)</label><input id="rpc" value="http://127.0.0.1:8545">
+  <button class="ghost" style="margin-top:10px" id="saveCfg">Save</button>
+  <div class="muted" id="cfgStatus" style="margin-top:8px"></div>
+</details>
+
+<div class="tabs">
+  <button data-t="verify" class="on">Verify</button>
+  <button data-t="issue">Issue</button>
+  <button data-t="revoke">Revoke</button>
+  <button data-t="admin">Admin</button>
+</div>
+
+<section id="t-verify" class="card">
+  <div class="drop" id="vdrop">Drop a certificate file here, or click to choose<input type="file" id="vfile" class="hidden"></div>
+  <label>…or paste a certificate hash (SHA-256)</label><input id="vhash" placeholder="0x… (64 hex chars)">
+  <button class="primary" id="vbtn">Verify</button>
+  <div id="vout"></div>
+</section>
+
+<section id="t-issue" class="card hidden">
+  <p class="muted">Only authorized issuer wallets can register certificates. The file itself never leaves your browser; only its SHA-256 fingerprint is stored on-chain.</p>
+  <div class="drop" id="idrop">Drop the certificate file (PDF/image) here, or click to choose<input type="file" id="ifile" class="hidden"></div>
+  <div class="mono muted" id="ihashShow"></div>
+  <label>Recipient name</label><input id="irec">
+  <label>Certificate title / course</label><input id="ititle">
+  <label>Institution</label><input id="iinst">
+  <button class="primary" id="ibtn">Issue on blockchain</button>
+  <div id="iout"></div>
+</section>
+
+<section id="t-revoke" class="card hidden">
+  <p class="muted">Revocation is permanent but the original record remains visible, marked revoked. Allowed for the original issuer or the contract owner.</p>
+  <label>Certificate hash</label><input id="rhash" placeholder="0x…">
+  <label>Reason</label><input id="rreason">
+  <button class="primary" id="rbtn">Revoke</button>
+  <div id="rout"></div>
+</section>
+
+<section id="t-admin" class="card hidden">
+  <div id="adminInfo" class="muted"></div>
+  <label>Issuer wallet address</label><input id="aaddr" placeholder="0x…">
+  <div class="row"><button class="primary" id="addBtn">Authorize issuer</button><button class="primary" id="rmBtn" style="background:var(--bad)">Remove issuer</button></div>
+  <div id="aout"></div>
+</section>
+</div>
+
+<script>
+const ABI = [
+  "function owner() view returns (address)",
+  "function isIssuer(address) view returns (bool)",
+  "function totalIssued() view returns (uint256)",
+  "function addIssuer(address)",
+  "function removeIssuer(address)",
+  "function issue(bytes32 hash,string recipient,string title,string institution)",
+  "function revoke(bytes32 hash,string reason)",
+  "function verify(bytes32 hash) view returns (bool exists,bool valid,tuple(bytes32 hash,address issuer,uint64 issuedAt,uint64 revokedAt,string recipient,string title,string institution,string revokeReason) cert)"
+];
+const $ = (id) => document.getElementById(id);
+let signer = null, issueHash = null;
+
+const esc = (s) => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = (ts) => new Date(Number(ts) * 1000).toLocaleString();
+const errMsg = (e) => esc(e.reason || e.shortMessage || e.info?.error?.message || e.message || String(e));
+function show(id, cls, html){ $(id).innerHTML = `<div class="res ${cls}">${html}</div>`; }
+
+async function sha256File(file){
+  const buf = await file.arrayBuffer();
+  const d = await crypto.subtle.digest("SHA-256", buf);
+  return "0x" + [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+const validHash = (h) => /^0x[0-9a-fA-F]{64}$/.test(h);
+
+// ---------- config & providers ----------
+async function loadCfg(){
+  let addr = localStorage.getItem("cc_addr"), rpc = localStorage.getItem("cc_rpc");
+  if(!addr){
+    try{ const r = await fetch("deployment.json"); if(r.ok){ addr = (await r.json()).address; } }catch(e){}
+  }
+  if(addr) $("addr").value = addr;
+  if(rpc) $("rpc").value = rpc;
+  if(!addr) $("cfg").open = true;
+}
+$("saveCfg").onclick = () => {
+  const a = $("addr").value.trim();
+  if(!ethers.isAddress(a)){ $("cfgStatus").textContent = "Invalid contract address."; return; }
+  localStorage.setItem("cc_addr", a); localStorage.setItem("cc_rpc", $("rpc").value.trim());
+  $("cfgStatus").textContent = "Saved."; refreshAdmin();
+};
+function readContract(){
+  const a = $("addr").value.trim();
+  if(!ethers.isAddress(a)) throw new Error("Set a valid contract address in Network settings first.");
+  const provider = signer ? signer.provider : new ethers.JsonRpcProvider($("rpc").value.trim());
+  return new ethers.Contract(a, ABI, provider);
+}
+function writeContract(){
+  if(!signer) throw new Error("Connect your wallet first.");
+  const a = $("addr").value.trim();
+  if(!ethers.isAddress(a)) throw new Error("Set a valid contract address in Network settings first.");
+  return new ethers.Contract(a, ABI, signer);
+}
+$("connectBtn").onclick = async () => {
+  try{
+    if(!window.ethereum) throw new Error("No wallet found. Install MetaMask.");
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    await provider.send("eth_requestAccounts", []);
+    signer = await provider.getSigner();
+    const a = await signer.getAddress();
+    $("acct").textContent = a.slice(0,6) + "…" + a.slice(-4);
+    $("connectBtn").textContent = "Connected";
+    refreshAdmin();
+  }catch(e){ alert(e.message || e); }
+};
+if(window.ethereum){
+  window.ethereum.on?.("accountsChanged", () => location.reload());
+  window.ethereum.on?.("chainChanged", () => location.reload());
+}
+
+// ---------- tabs ----------
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x === b));
+  ["verify","issue","revoke","admin"].forEach(t => $("t-"+t).classList.toggle("hidden", t !== b.dataset.t));
+  if(b.dataset.t === "admin") refreshAdmin();
+});
+
+// ---------- file drop helper ----------
+function wireDrop(dropId, fileId, onFile){
+  const d = $(dropId), f = $(fileId);
+  d.onclick = () => f.click();
+  f.onchange = () => f.files[0] && onFile(f.files[0]);
+  d.ondragover = (e) => { e.preventDefault(); d.classList.add("over"); };
+  d.ondragleave = () => d.classList.remove("over");
+  d.ondrop = (e) => { e.preventDefault(); d.classList.remove("over"); e.dataTransfer.files[0] && onFile(e.dataTransfer.files[0]); };
+}
+wireDrop("vdrop","vfile", async (file) => {
+  $("vdrop").firstChild.textContent = file.name; $("vhash").value = await sha256File(file); verify();
+});
+wireDrop("idrop","ifile", async (file) => {
+  $("idrop").firstChild.textContent = file.name; issueHash = await sha256File(file);
+  $("ihashShow").textContent = "SHA-256: " + issueHash;
+});
+
+// ---------- verify ----------
+async function verify(){
+  const h = $("vhash").value.trim().toLowerCase();
+  if(!validHash(h)) return show("vout","warn","Enter a valid 64-hex-character SHA-256 hash, or drop a file.");
+  show("vout","warn","Checking blockchain…");
+  try{
+    const [exists, valid, c] = await readContract().verify(h);
+    if(!exists) return show("vout","bad","<h3>✖ Not found</h3>This file's fingerprint is not registered. It may be forged, altered, or never issued through this registry.");
+    const rows = `<div class="kv"><b>Recipient</b><span>${esc(c.recipient)}</span><b>Title</b><span>${esc(c.title)}</span><b>Institution</b><span>${esc(c.institution)}</span><b>Issued</b><span>${fmt(c.issuedAt)}</span><b>Issuer</b><span class="mono">${c.issuer}</span><b>Hash</b><span class="mono">${c.hash}</span></div>`;
+    if(valid) show("vout","ok","<h3>✔ Authentic certificate</h3>"+rows);
+    else show("vout","bad",`<h3>⚠ Revoked certificate</h3>${rows}<div class="kv" style="margin-top:6px"><b>Revoked</b><span>${fmt(c.revokedAt)}</span><b>Reason</b><span>${esc(c.revokeReason||"—")}</span></div>`);
+  }catch(e){ show("vout","bad","Could not reach the contract: "+errMsg(e)); }
+}
+$("vbtn").onclick = verify;
+$("vhash").onkeydown = (e) => e.key === "Enter" && verify();
+
+// ---------- issue ----------
+$("ibtn").onclick = async () => {
+  try{
+    if(!issueHash) throw new Error("Choose the certificate file first.");
+    const rec = $("irec").value.trim(), title = $("ititle").value.trim(), inst = $("iinst").value.trim();
+    if(!rec || !title) throw new Error("Recipient and title are required.");
+    $("ibtn").disabled = true; show("iout","warn","Confirm the transaction in your wallet…");
+    const tx = await writeContract().issue(issueHash, rec, title, inst);
+    show("iout","warn","Waiting for confirmation… <span class='mono'>"+tx.hash+"</span>");
+    await tx.wait();
+    const link = location.href.split("?")[0].split("#")[0] + "?hash=" + issueHash;
+    show("iout","ok",`<h3>✔ Certificate registered</h3>Share this verification link:<div class="mono" style="margin-top:6px"><a href="${esc(link)}">${esc(link)}</a></div>`);
+  }catch(e){ show("iout","bad", errMsg(e)); }
+  $("ibtn").disabled = false;
+};
+
+// ---------- revoke ----------
+$("rbtn").onclick = async () => {
+  try{
+    const h = $("rhash").value.trim().toLowerCase();
+    if(!validHash(h)) throw new Error("Enter a valid certificate hash.");
+    $("rbtn").disabled = true; show("rout","warn","Confirm in your wallet…");
+    const tx = await writeContract().revoke(h, $("rreason").value.trim());
+    await tx.wait();
+    show("rout","ok","<h3>Certificate revoked</h3>");
+  }catch(e){ show("rout","bad", errMsg(e)); }
+  $("rbtn").disabled = false;
+};
+
+// ---------- admin ----------
+async function refreshAdmin(){
+  try{
+    const c = readContract();
+    const [o, n] = await Promise.all([c.owner(), c.totalIssued()]);
+    let me = "";
+    if(signer){ const a = await signer.getAddress(); me = ` · You are ${a.toLowerCase()===o.toLowerCase()?"the <b>owner</b>":(await c.isIssuer(a)?"an <b>issuer</b>":"a regular user")}.`; }
+    $("adminInfo").innerHTML = `Owner: <span class="mono">${o}</span><br>Certificates issued: ${n}${me}`;
+  }catch(e){ $("adminInfo").textContent = ""; }
+}
+async function setIssuer(add){
+  try{
+    const a = $("aaddr").value.trim();
+    if(!ethers.isAddress(a)) throw new Error("Enter a valid wallet address.");
+    const c = writeContract();
+    const tx = add ? await c.addIssuer(a) : await c.removeIssuer(a);
+    show("aout","warn","Waiting for confirmation…"); await tx.wait();
+    show("aout","ok", add ? "Issuer authorized." : "Issuer removed.");
+  }catch(e){ show("aout","bad", errMsg(e)); }
+}
+$("addBtn").onclick = () => setIssuer(true);
+$("rmBtn").onclick = () => setIssuer(false);
+
+// ---------- init (supports ?hash=0x… share links) ----------
+(async () => {
+  await loadCfg();
+  const h = new URLSearchParams(location.search).get("hash");
+  if(h){ $("vhash").value = h; if($("addr").value) verify(); }
+})();
+</script>
+</body>
+</html>
